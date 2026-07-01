@@ -1,0 +1,72 @@
+TASK 4.2 - Vị trí các biến trong bộ nhớ
+1. BIKE_MODEL -> vùng .rodata (ROM/Flash)
+   Lý do: là mảng const char[], giá trị không đổi trong suốt chương trình
+   nên trình biên dịch đặt vào vùng chỉ đọc, nằm trong Flash.
+
+2. total_odometer -> vùng .bss (RAM)
+   Lý do: là biến toàn cục được khởi tạo = 0. Các biến toàn cục khởi tạo
+   bằng 0 (hoặc không khởi tạo) được gom vào .bss. Vùng này chỉ lưu
+   "kích thước" trong file thực thi, không tốn chỗ trong Flash, và sẽ
+   được clear về 0 lúc chương trình khởi động.
+
+3. current_speed -> vùng Stack (RAM)
+   Lý do: là biến cục bộ (local) khai báo trong hàm main(). Biến cục bộ
+   luôn được cấp phát trên Stack, tồn tại khi hàm đang chạy và bị hủy
+   khi hàm kết thúc.
+
+Ghi nhớ nhanh: 
+   const toàn cục      -> .rodata (Flash)
+   global = 0 / không khởi tạo -> .bss (RAM)
+   biến trong hàm       -> Stack (RAM)
+
+
+TASK 4.3 - Điều gì xảy ra khi chạy crash_simulation()?
+
+Trên máy tính (PC):
+   Hàm gọi lại chính nó (đệ quy) không có điều kiện dừng, mỗi lần gọi
+   lại chiếm thêm một vùng nhớ trên Stack. Stack có giới hạn, nên sau
+   một số lần gọi, Stack bị tràn (Stack Overflow) -> hệ điều hành phát
+   hiện chương trình truy cập vùng nhớ không được phép -> chương trình
+   bị dừng đột ngột với lỗi:
+      - Linux: Segmentation Fault
+      - Windows: Access Violation / Stack Overflow Exception
+
+Trên vi điều khiển thực tế (ARM Cortex-M):
+   Không có hệ điều hành để "bắt lỗi" như trên PC. Khi Stack tràn và
+   đè lên vùng nhớ khác, CPU sẽ phát hiện truy cập bất hợp lệ và tự
+   động nhảy vào một ngoại lệ (exception) phần cứng, thường là:
+      -> HardFault_Handler
+   (Nếu chip có bật MPU để giám sát vùng Stack thì có thể vào
+   MemManage_Fault trước khi escalate lên HardFault).
+
+
+TASK 5 - Chọn cách khai báo trip_history nào cho phù hợp?
+
+Đề bài: Flash chỉ còn trống 20 KB, RAM còn trống 128 KB.
+Mảng cần khai báo: uint16_t trip_history[20000]; (~40 KB)
+
+  Cách 1: uint16_t trip_history[20000] = {0};       -> CHỌN CÁCH NÀY
+  Cách 2: uint16_t trip_history[20000] = {1, 2, 3};  -> KHÔNG dùng được
+
+Giải thích:
+- Cách 1 (khởi tạo toàn bộ = 0):
+  Trình biên dịch xếp mảng này vào vùng .bss. Vùng .bss KHÔNG lưu
+  dữ liệu thật trong Flash, chỉ ghi lại "cần cấp phát bao nhiêu byte
+  bằng 0". Khi chip khởi động, đoạn code startup sẽ tự động clear
+  vùng RAM tương ứng về 0.
+  => Gần như không tốn Flash, chỉ tốn RAM (40 KB, trong khi RAM
+     còn dư tới 128 KB) -> biên dịch và nạp bình thường.
+
+- Cách 2 (khởi tạo một vài phần tử khác 0):
+  Vì có giá trị khác 0, mảng bắt buộc phải nằm trong vùng .data.
+  Vùng .data yêu cầu lưu SẴN toàn bộ 40 KB dữ liệu khởi tạo trong
+  Flash (để lúc khởi động, code startup copy nguyên si 40 KB đó
+  từ Flash sang RAM).
+  => Cần tới 40 KB Flash, nhưng Flash chỉ còn trống 20 KB
+  -> KHÔNG đủ chỗ -> Linker báo lỗi (region overflow), không nạp
+     được xuống chip.
+
+Kết luận ngắn gọn:
+  -bss  = chỉ tốn RAM, gần như không tốn Flash (dùng khi giá trị = 0)
+  -data = tốn cả RAM lẫn Flash (dùng khi có giá trị khởi tạo khác 0)
+  => Trong bài này phải chọn CÁCH 1 vì Flash quá ít, còn RAM thì dư.
